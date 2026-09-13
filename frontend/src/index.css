@@ -1,0 +1,7 @@
+/* Ajustes mínimos por cima do Bootstrap - a maior parte do visual (cards,
+   botões, badges, alerts, grid) já vem das classes utilitárias do Bootstrap
+   usadas diretamente nos componentes (ver ProductCard.tsx). */
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
