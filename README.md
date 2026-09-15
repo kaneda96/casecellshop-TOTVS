@@ -90,6 +90,56 @@ estrutura de pastas) estão nos READMEs de [`backend/`](backend/README.md) e
   `message` (amigável) e `retryable`. Contrato completo na
   [Pergunta 4](docs/RESPOSTAS.md#pergunta-4).
 
+## Arquitetura alvo incremental (diagrama)
+
+Desenho de referência da evolução proposta na [Pergunta 2](docs/RESPOSTAS.md#pergunta-2).
+Renderiza automaticamente no GitHub (bloco de código `mermaid`).
+
+```mermaid
+flowchart LR
+    subgraph ERP["ERP (fonte de verdade financeira)"]
+        ERPDB[(Banco do ERP)]
+    end
+
+    subgraph Loja["Loja (serviços próprios)"]
+        Sync["Sincronização de\ncatálogo e estoque"]
+        Catalog[(Catálogo e estoque\nda loja)]
+        Stock["Reserva de estoque"]
+        Orders[(Pedidos)]
+        Worker["Worker de faturamento"]
+        Reconcile["Reconciliação"]
+    end
+
+    Front["Front-end (vitrine + checkout)"]
+
+    ERPDB --> Sync --> Catalog
+    Front --> Catalog
+    Front --> Stock
+    Stock --> Orders
+    Orders --> Worker
+    Worker --> ERP
+    Worker --> Stock
+    Reconcile --> ERPDB
+    Reconcile --> Orders
+```
+
+**Leitura do fluxo:**
+1. O catálogo é sincronizado do ERP para o banco da loja de forma assíncrona
+   (não bloqueia nenhuma requisição de cliente).
+2. A vitrine só fala com os serviços da loja — nunca o ERP diretamente.
+3. O checkout reserva estoque localmente (atômico), responde rápido ao
+   cliente e delega o faturamento real ao ERP via fila/worker.
+4. Um job de reconciliação garante que divergências entre loja e ERP sejam
+   detectadas e corrigidas.
+
+No mini-projeto entregue, a versão "mínima" desse desenho está implementada:
+sem fila/worker separados (o processamento assíncrono acontece dentro do
+próprio processo da API, com timeout), e sem banco de leitura próprio (o
+catálogo já está em memória na loja, já que não há um ERP real para
+sincronizar). A estrutura de reserva/confirmação/liberação de estoque e o
+padrão de resposta rápida + polling, porém, são os mesmos que essa
+arquitetura alvo propõe.
+
 ## Por que NestJS
 
 Cheguei a implementar a primeira versão em Express puro, e migrei para
@@ -183,12 +233,6 @@ dos dois comandos de sempre.
 
 ## Documentação completa
 
-- [docs/RESPOSTAS.md](docs/RESPOSTAS.md) — as 6 perguntas conceituais da
-  Parte 1.A (diagnóstico dos 3 problemas, arquitetura alvo incremental,
-  estoque/concorrência/idempotência, contrato de API, estratégia de testes,
-  uso de IA).
-- [docs/DIAGRAMA.md](docs/DIAGRAMA.md) — diagrama (Mermaid) da arquitetura
-  alvo.
 - [backend/README.md](backend/README.md) — setup, estrutura e checklist de
   entrega do back-end.
 - [frontend/README.md](frontend/README.md) — setup, estrutura e checklist
