@@ -2,7 +2,7 @@ import { Controller, Get, Param } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { StockService } from '../stock/stock.service';
 import { ProductListResponseDto, ProductResponseDto } from './dto/product-response.dto';
-import { ApiErrorResponseDto } from '../common/dto/api-error-response.dto';
+import { ApiErrorResponseDto } from '../../common/dto/api-error-response.dto';
 
 @ApiTags('products')
 @Controller('products')

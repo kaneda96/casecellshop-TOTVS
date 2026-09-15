@@ -32,7 +32,7 @@ export class InsufficientStockException extends AppException {
   }
 }
 
-export class ErpUnavailableException extends AppException {
+export class UnavailableException extends AppException {
   constructor(orderId: string) {
     super(HttpStatus.SERVICE_UNAVAILABLE, {
       errorCode: 'ERP_UNAVAILABLE',

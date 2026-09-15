@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/nestjs/nestjs-original.svg" alt="NestJS" width="80" height="80" />
+</p>
+
 # Backend — CaseCellShop Checkout API (NestJS)
 
 API do fluxo de checkout, feita em **NestJS + TypeScript**, com dados em
@@ -20,9 +24,10 @@ A API sobe em `http://localhost:3001` (configurável via `PORT`).
 
 - **Swagger (documentação interativa da API):** `http://localhost:3001/docs`
 - **Healthcheck:** `GET /health`
-- **Logs:** gravados em `backend/logs/` (fora de `src`/`dist`) — `combined.log`
-  (tudo) e `error.log` (só erros), em JSON estruturado. No console, os
-  mesmos logs aparecem formatados para leitura humana.
+- **Logs:** gravados em `backend/logs/app.log` (pasta fora de `src`/`dist`), com
+  uma linha JSON por evento (`time`, `level`, `context`, `message`). Todo
+  request HTTP passa pelo `LoggingInterceptor` e vira uma linha com
+  `context: "HTTP"`; no console os mesmos logs saem em formato legível.
 
 ## Testes
 
@@ -35,17 +40,25 @@ npm run test:e2e  # end-to-end (test/app.e2e-spec.ts) - sobe a aplicação real 
 
 ```
 src/
-├── main.ts                 bootstrap: Swagger, logger, pipes, filtros
-├── app.module.ts            módulo raiz + middleware de log por requisição
-├── bootstrap/                configuração compartilhada entre main.ts e os testes e2e
-├── logging/                   Winston (console + arquivos em ../logs)
+├── main.ts                    bootstrap: Swagger, pipes, filtros e logger global
+├── app.module.ts               módulo raiz + registro do interceptor de log das rotas
+├── health.controller.ts        GET /health
+├── bootstrap/                  configuração compartilhada entre main.ts e os testes e2e
+│   ├── configure-app.ts         CORS, ValidationPipe e filtro global
+│   └── swagger.ts                montagem da documentação em /docs
 ├── common/
-│   ├── exceptions/            exceções de domínio (404/409/503 já formatados)
-│   └── filters/                filtro global que normaliza toda resposta de erro
-├── stock/                     StockService: reserva/confirma/libera estoque (atômico)
-├── erp/                        simulador do ERP (latência/instabilidade)
-├── products/                   controller de catálogo
-└── orders/                     DTO, controller e service do checkout
+│   ├── dto/                      contrato de erro usado na documentação do Swagger
+│   ├── exceptions/               exceções de domínio (404/409/503 já formatadas)
+│   ├── filters/                  filtro global que normaliza toda resposta de erro
+│   ├── interceptors/              LoggingInterceptor: uma linha por request HTTP
+│   └── service/custom-logger/     CustomLoggerService: console + logs/app.log
+├── data/
+│   └── products.seed.ts          catálogo inicial (Map novo a cada instância)
+└── module/
+    ├── stock/                     StockService: reserva/confirma/libera estoque (atômico)
+    ├── erp/                        simulador do ERP (latência/instabilidade)
+    ├── products/                   controller de catálogo
+    └── orders/                     DTO, controller e service do checkout
 test/
 └── app.e2e-spec.ts             testes end-to-end (12 cenários)
 ```
@@ -101,7 +114,8 @@ resolvido (para você, no futuro, lembrar rápido o que foi feito e por quê).
 
 **Bônus implementados:**
 - Diagrama de arquitetura: [`../docs/DIAGRAMA.md`](../docs/DIAGRAMA.md).
-- Logs estruturados: `logging/` (Winston, ver seção acima).
+- Logs estruturados: `common/service/custom-logger/` (console + `logs/app.log`)
+  e `common/interceptors/` (log das rotas) — ver seção acima.
 - Endpoint de status do pedido: `GET /orders/:id` (para polling após um `202`).
 - Teste de concorrência: `stock/stock.service.spec.ts` e `test/app.e2e-spec.ts`.
 - Documentação Swagger interativa em `/docs`.

@@ -4,133 +4,79 @@
 
 ### 01 | Performance da vitrine
 
-**Causa provável:** a loja consulta o ERP via API REST síncrona a cada acesso à
-vitrine. O ERP é um monolito que também roda faturamento, financeiro e
-contábil — não foi desenhado para responder a milhões de leituras de catálogo
-por dia com baixa latência, e cada requisição da vitrine provavelmente dispara
-uma consulta pesada (joins, cálculo de preço, checagem de estoque) que compete
-por recursos com as rotinas internas do ERP.
+- **O que você acredita estar causando o problema?**
+O ERP não é feito para atender catálogo de e-commerce em alta demanda, e a loja o consulta a todo momento.
+Isso causa lentidão para o usuário e também impacta outras áreas como financeiro e contábil, que competem pelos mesmos recursos.
 
-**Impacto:**
-- Cliente: abandono de carrinho logo na entrada do funil, percepção de site
-  "quebrado" ou lento, perda de confiança.
-- Negócio: perda direta de receita (cada segundo de atraso reduz conversão),
-  e risco de sobrecarregar o ERP a ponto de atrapalhar operações internas
-  (faturamento, financeiro) que dependem dele.
+- **Qual é o impacto para o cliente e para o negócio?**
+Para o cliente: abandono da jornada devido à lentidão.
+Para o negócio: perda de conversão e sobrecarga do ERP, que fica lento para outras áreas que utilizam o ERP.
 
-**Caminhos possíveis:**
-1. **Cache de leitura entre a loja e o ERP** (ex: Redis, ou até cache em
-   memória com TTL curto) para produtos, preços e estoque, atualizado por um
-   job periódico ou por eventos.
-   - Trade-off: estoque exibido pode ficar levemente desatualizado (segundos
-     a minutos, dependendo do TTL). Baixo custo de implementação e baixo risco.
-2. **Banco de leitura próprio da loja** (réplica/projeção dos dados do ERP,
-   sincronizada por job ou CDC a partir do MySQL do ERP), servindo a vitrine
-   sem nunca tocar o ERP em tempo real.
-   - Trade-off: mais componentes para manter (pipeline de sincronização), mas
-     desacopla completamente a vitrine do ERP e permite otimizar o schema para
-     leitura (ex: desnormalizado, com índices pensados para busca/filtro).
-3. **CDN / cache de borda** para páginas ou fragmentos de produto mais
-   acessados.
-   - Trade-off: bom para picos de tráfego repetido no mesmo produto, mas não
-     resolve estoque (que muda com frequência) sozinho — funciona melhor como
-     complemento aos dois caminhos acima.
+- **Quais seriam pelo menos 2 caminhos possíveis de solução?**
 
-**Priorização:** eu começaria pelo **banco próprio da loja alimentado por
-sincronização assíncrona do ERP** (caminho 2), com cache em memória/Redis por
-cima dele (caminho 1) para os produtos mais acessados. É o que mais reduz a
-dependência direta do ERP (objetivo central do desafio) e, embora dê mais
-trabalho que um cache simples, evita reconstruir essa peça de novo quando o
-tráfego crescer ainda mais. O cache de borda (3) fica como otimização
-posterior, pois ataca um sintoma (latência) sem resolver a causa
-(acoplamento direto ao ERP).
+1. **Criar um esquema de paginação na consulta do banco de dados do ERP**
+   Acredito que seja a forma mais simples de mitigar esse problema em curto prazo, limitando quantos produtos voltam por requisição. Pode trazer um alívio para a aplicação em um momento de extrema urgência.
+  ***Trade-off***: Não resolve a causa raiz do problema, ainda há muita demanda para o ERP que realiza a função de e-commerce e isso não é o adequado, porque compete com faturamento e contabilidade pelos mesmos recursos.
+
+2. **Criar um cache simples para a visualização da vitrine com Redis**
+  Seria interessante criar um cache para a visualização dos itens da vitrine com Redis, que
+  é uma estratégia mais simples, mas pode dar muita inconsistência dependendo do tempo de refresh dele.
+  ***Trade-off***: Em cache miss, ainda é necessário consultar o ERP para repopular o cache. Se muitas requisições chegarem no momento da expiração, pode gerar um pico de chamadas ao ERP (cache stampede)
+
+3. **Criar uma API própria para essa página de vendas e um banco de dados próprio atualizado por um job**
+  Para a solução mais robusta e mais recomendada, seria uma nova API que retirasse essa responsabilidade do ERP e criasse uma cópia de dados em um banco local, específico para a loja. Essa cópia seria atualizada a partir do banco do ERP por um job agendado, que roda de forma independente do BFF, a cada 5 minutos. A loja lê apenas do banco local, nunca do ERP em tempo real. O job usa lock distribuído para evitar execução duplicada se houver múltiplas instâncias.
+  ***Trade-off:*** A implementação pode demorar mais devido à criação da estrutura da nova API e também depende da estrutura de dados do ERP. Exemplo: precisaria de um campo como updated_at para saber a data da última atualização do anúncio, e usá-lo como base para a consulta do job. Além disso, depende do escopo dos responsáveis pela implementação.
+
+
+**Priorização:** Na minha opinião, eu priorizaria a opção número 3. O ERP é sobrecarregado de requisições e ele precisa o quanto antes ser separado para não afetar as outras áreas da empresa que dependem dele.
 
 ---
 
 ### 02 | Consistência de estoque
 
-**Causa provável:** a checagem de estoque e a decisão de vender provavelmente
-acontecem sem nenhum mecanismo de reserva/trava — cada requisição de compra lê
-o estoque, vê que há saldo, e "aceita" a venda, sem impedir que outra
-requisição concorrente faça exatamente a mesma leitura antes da primeira
-confirmar. Isso é uma clássica condição de corrida (race condition):
-duas leituras acontecem antes de qualquer escrita.
+- **O que você acredita estar causando o problema?**
+O problema principal seria a concorrência no estoque. A loja lê o saldo de estoque no ERP enquanto muitos outros usuários realizam compras simultâneas, o que pode gerar uma informação falsa de saldo de estoque e possibilita uma compra sem produto.
 
-**Impacto:**
-- Cliente: paga por um produto que não existe, frustração, necessidade de
-  reembolso/cancelamento, dano à confiança na marca.
-- Negócio: custo de reembolso, custo operacional de atendimento, risco
-  reputacional (reclamações públicas, avaliações negativas), e no limite,
-  problema jurídico (propaganda enganosa / venda sem entrega).
+- **Qual é o impacto para o cliente e para o negócio?**
+- Cliente: A página possibilita uma compra sem saber o número exato do produto disponível.
+- Negócio: Gera custo operacional para a empresa devido ao processo de suporte e risco de reputação.
 
-**Caminhos possíveis:**
-1. **Reserva de estoque com operação atômica** (banco com constraint/lock, ou
-   um serviço dedicado que serializa as decisões de reserva) — decrementa o
-   estoque disponível no momento da tentativa de compra, antes de confirmar
-   o pedido.
-   - Trade-off: exige desenhar bem o ciclo de vida da reserva (quando expira
-     se o cliente não fechar o pedido), mas é a solução mais direta ao
-     problema.
-2. **Fila de pedidos processada sequencialmente por produto** (ex: partição
-   por `productId` em uma fila), garantindo que decisões sobre o mesmo produto
-   nunca sejam avaliadas em paralelo.
-   - Trade-off: adiciona latência (o pedido espera a fila) e complexidade
-     operacional (fila, workers, monitoramento), mas escala bem e é robusto.
-3. **Overselling controlado + reconciliação**: aceitar a venda e resolver
-   depois (cancelar/reembolsar o pedido excedente automaticamente).
-   - Trade-off: simples de implementar, mas reintroduz exatamente a
-     experiência ruim que o case quer evitar — não recomendo como solução
-     principal, só como rede de segurança complementar.
+- **Quais seriam pelo menos 2 caminhos possíveis de solução?**
 
-**Priorização:** caminho 1 (reserva atômica de estoque) é a prioridade
-máxima entre os três problemas do case — é o que gera prejuízo financeiro
-direto e dano de confiança mais imediato. É relativamente barato de
-implementar (uma coluna `reserved` + uma operação atômica de update) e
-resolve a causa raiz, não o sintoma.
+  1. **Reserva de estoque no carrinho de compras** Ao incluir o produto no carrinho de compras, é inserido um token em uma tabela auxiliar e reservado o estoque nesse momento. Feito isso, o cliente consegue verificar no exato momento se ainda há estoque disponível ou não, sem passar pelo checkout, o que não sobrecarrega o checkout.
+      ***Trade-off:*** Esse formato pode causar uma reserva de estoque, inviabilizando outra compra por um curto período de tempo. Também aumenta a complexidade da solução, devido à criação de um job que realiza a varredura nessa tabela e devolve o estoque em caso de abandono. Em caso de remoção do carrinho, a API libera a reserva na hora.
 
+  2. **Reserva de estoque com banco de dados** No momento da finalização da compra a aplicação faz um update em um campo auxiliar no banco de dados indicando que existe um produto reservado e não é possível continuar com a compra caso ela esteja com estoque insuficiente.
+    ***Trade-off:*** Requer o desenho de uma solução auxiliar em caso de desistência ou expiração do pedido como um job de expiração, rodando em processo separado do BFF. O que retorna o estoque em seu número original.
+
+  3. **Fila de pedidos processada sequencialmente por produto** Após a finalização da compra, o cliente recebe um 202 (Accepted) informando que o pedido foi recebido e está "Em processamento". Uma fila particionada por  produto_id processa os pedidos um por vez: consulta o estoque, verifica se há quantidade suficiente, e reserva. Se houver estoque, o pedido segue para pagamento. Se não houver, o pedido é marcado como REJEITADO e o cliente é notificado.
+    ***Trade-off:*** Requer o desenho de uma solução auxiliar em caso de desistência ou expiração do pedido como um job de expiração, requer ajuste da parte de negócios (UX) devido ao status de "em processamento" e possui uma alta latência de acordo com a demanda (o cliente espera na fila).
+
+
+- **Priorização:** Acredito que eu usaria a opção 1 ou 2 devido a uma maior consistência na informação do estoque e permite ao usuário realizar uma ação consistente no sistema em tempo real, mesmo que isso inviabilize algumas compras por um curto período de tempo. Uma outra alternativa também seria mesclar algumas soluções, por exemplo: a
 ---
 
 ### 03 | Resiliência do checkout
 
-**Causa provável:** o checkout de fato chama o ERP de forma síncrona para
-gerar faturamento, e essa chamada às vezes demora mais que o timeout
-configurado (no cliente, no load balancer, ou no próprio código). Quando isso
-acontece, a requisição HTTP falha do ponto de vista do cliente, mas o
-back-end pode ou não ter processado a operação no ERP — resultado: o cliente
-"perde a compra" (viu erro), mesmo que o pedido possa ter sido criado.
+**Causa provável:** O checkout chama o ERP de forma síncrona e espera a resposta para confirmar o pedido. Quando o ERP demora mais que o timeout, a requisição falha para o cliente mas o pedido pode ter sido criado parcialmente no ERP. Não há retry, nem idempotência, nem desacoplamento. O problema de fundo é que o ERP não foi feito para responder a milhares de checkouts simultâneos com baixa latência.
 
 **Impacto:**
-- Cliente: acha que a compra falhou, tenta de novo (risco de comprar/pagar
-  duas vezes) ou desiste (perda de venda). Em ambos os casos, experiência ruim.
+- Cliente: acha que a compra falhou, tenta de novo ou desiste. Em ambos os casos, a experiência é ruim.
 - Negócio: perda de vendas por timeout, risco de cobrança duplicada se o
-  cliente tentar de novo sem proteção de idempotência, e aumento de chamados
-  de suporte.
+  cliente tentar de novo e aumento de chamados de suporte.
 
 **Caminhos possíveis:**
-1. **Checkout assíncrono com resposta imediata**: a loja aceita o pedido,
-   devolve uma resposta rápida (ex: "pedido recebido, processando") e
-   processa a confirmação com o ERP em background, com o cliente consultando
-   o status (polling ou WebSocket) até a confirmação.
-   - Trade-off: exige que o front-end saiba lidar com um estado
-     "processando" em vez de sucesso/erro imediato, mas remove o timeout do
-     caminho crítico da experiência do usuário.
-2. **Timeout curto + fila de retry no back-end**: o back-end tenta a chamada
-   síncrona ao ERP com um timeout agressivo; se estourar, enfileira um job
-   de retry e informa ao cliente que o pedido está em processamento.
-   - Trade-off: parecido com o caminho 1, mas usa fila como mecanismo de
-     retry — mais resiliente a picos e reinicializações do serviço, ao custo
-     de mais infraestrutura.
-3. **Aumentar o timeout e otimizar a chamada ao ERP** (ex: paralelizar
-   etapas, reduzir payload).
-   - Trade-off: mais simples de implementar, mas não resolve o problema de
-     fundo (a UX ainda fica esperando o ERP) e só empurra o problema para
-     picos de carga maiores.
+  1. **Serviço de faturamento dedicado + fila + WebSocket**: 
+    A criação de um serviço específico para gerar o faturamento da loja e desacoplar essa responsabilidade do ERP. O ERP é um monolito e não foi feito para responder a milhares de checkouts simultâneos. Ele irá continuar existindo, mas para processos mais focados no interior da empresa. O fluxo: a API recebe o pedido, enfileira e responde 202 Accepted. Um worker consome a fila e chama o serviço de faturamento. Quando o processamento termina, o servidor notifica o cliente via WebSocket. Feito isso, dá para fazer um escalonamento com load balancer e dar uma dinâmica maior para a escalabilidade. É a solução mais robusta.
+   - Trade-off: exige a criação de um novo serviço de faturamento e aumenta muito a complexidade para implementar e manter serviços.
 
-**Priorização:** eu priorizaria o caminho 1 (checkout assíncrono com resposta
-rápida + status consultável), que é exatamente o que implementei no
-mini-projeto: o back-end responde em até ~2s mesmo que o ERP demore, e o
-front-end faz polling do status. Reservo a fila de retry (caminho 2) como
-evolução natural desse mesmo modelo quando o volume justificar (ver Pergunta 2).
+  2. **Fila no momento do checkout no Próprio ERP**: Seria uma solução mais conservadora, sem desacoplar o ERP. É mais simples de implementar, porém o ERP ainda irá sofrer uma carga muito grande com o número de requisições. A fila serializa as operações, mas o ERP continua processando todas as requisições, apenas uma de cada vez.
+   ***Trade-off:*** Resolve de forma rápida o problema, mas não tira a sobrecarga do ERP. O usuário pode não ter confirmação imediata no checkout, e pode haver uma demora para concluir o processo de compra.
+
+  3. **Transactional Outbox + cópia de banco para leitura** Essa aqui consiste na criação de instancias cópia do banco de dados do ERP para a leitura e a criação de uma implementação semelhante a fila. Primeiro é criado uma transação na API para gravar o pedido como "PENDENTE" e depois uma linha para "enfileirar" o processamento em uma tabela auxiliar (ex: PedidoCriado) que seria a outbox um outro serviço realiza a leitura desses eventos e manda para o ERP ao concluir o pedido é marcado como processado. 
+  ***Trade-off:*** Adiciona latência e ainda é necessário realizar a criação desse serviço de integração da tabela de eventos e o ERP
+
+**Priorização:** Acho que a opção 3 é a opção mais acessivel no curto prazo, mas a mais robusta é a 1. A opção 2 é boa mas ainda cria uma depencia grande do ERP e pode gerar interferência em outros processos internos dos quais o ERP é responsável.
 
 ---
 
@@ -144,10 +90,7 @@ evolução natural desse mesmo modelo quando o volume justificar (ver Pergunta 2
   otimizada para leitura, populada por sincronização a partir do ERP.
 - **Cache (Redis ou em memória):** na frente do banco de leitura, para os
   produtos mais acessados (reduz ainda mais a latência da vitrine).
-- **Serviço de estoque/reserva:** dono da lógica de reserva, confirmação e
-  liberação de estoque. É o único componente autorizado a decidir "posso
-  vender esta unidade agora?" — centraliza a garantia de não-overselling.
-- **Fila de pedidos/eventos (ex: RabbitMQ, SQS, ou até uma tabela de outbox):**
+- **Fila de pedidos/eventos (ex: RabbitMQ, SQS,tabela de outbox):**
   desacopla o checkout do processamento síncrono no ERP.
 - **Workers de sincronização:** dois sentidos —
   - ERP → Loja: job/CDC que replica catálogo, preço e estoque do MySQL do
@@ -155,9 +98,6 @@ evolução natural desse mesmo modelo quando o volume justificar (ver Pergunta 2
     poucos minutos).
   - Loja → ERP: worker que consome a fila de pedidos confirmados e envia o
     faturamento para o ERP, com retry e backoff.
-- **Banco de pedidos da loja:** guarda o pedido, seu status, a
-  Idempotency-Key e o histórico de tentativas — fonte de verdade para o
-  cliente consultar "onde está minha compra".
 
 ### Fluxo de dados
 
@@ -503,7 +443,7 @@ tentativa (nova `Idempotency-Key`), pois é efetivamente uma nova compra.
   — *(implementado)*.
 - Próximo passo natural: um teste de carga (ex: k6 ou autocannon) disparando
   dezenas de requisições concorrentes contra o mesmo produto, para validar
-  que o total vendido nunca excede o estoque inicial sob volume maior.
+  que o total vendido nunca excede o estoque inicial sob volume maior.]
 
 ### Testes de estados do front-end
 - Não automatizados neste projeto, mas a estratégia seria usar React

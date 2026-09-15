@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Product } from './product.interface';
-import { seedProducts } from '../data/products.seed';
-import { ProductNotFoundException, InsufficientStockException } from '../common/exceptions/domain.exceptions';
+import { seedProducts } from '../../data/products.seed';
+import { ProductNotFoundException, InsufficientStockException } from '../../common/exceptions/domain.exceptions';
 
 @Injectable()
 export class StockService {
@@ -9,6 +9,7 @@ export class StockService {
   // singleton por padrão, então há um único Map por processo da aplicação —
   // mas cada TestingModule de teste cria a sua própria instância, isolada).
   private readonly products: Map<string, Product> = seedProducts();
+   private readonly logger = new Logger(StockService.name);
 
   listProducts(): Product[] {
     return Array.from(this.products.values());

@@ -1,3 +1,8 @@
+<p align="center">
+  <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/react/react-original.svg" alt="React" width="80" height="80" />
+  <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/bootstrap/bootstrap-original.svg" alt="Bootstrap" width="80" height="80" />
+</p>
+
 # Frontend — CaseCellShop Checkout (React + Bootstrap)
 
 SPA em **React + TypeScript**, com **Bootstrap** para estilo (sem
@@ -39,6 +44,49 @@ src/
     ├── ProductList.tsx        grid responsivo (Bootstrap) dos produtos
     └── ProductCard.tsx         card de produto: quantidade, compra, estados
 ```
+
+## Testes end-to-end (Playwright)
+
+Os testes ficam em `e2e/` e rodam contra o **backend real** (a API não é
+mockada). O `webServer` do Playwright sobe o Vite e, se a API ainda não
+estiver respondendo, compila e sobe o backend também.
+
+```bash
+npm run test:e2e            # roda a suíte (headless)
+npm run test:e2e:headed     # com o navegador visível
+npm run test:e2e:ui         # modo interativo do Playwright
+npm run test:e2e:report     # abre o último relatório HTML
+npm run test:e2e:typecheck  # só a checagem de tipos dos testes
+```
+
+Na primeira vez é preciso baixar o navegador: `npx playwright install chromium`.
+
+| Arquivo | Escopo |
+| --- | --- |
+| `e2e/catalog.spec.ts` | cards por produto, preço em pt-BR, badge de estoque, produto esgotado |
+| `e2e/checkout.spec.ts` | compra real ponta a ponta (confirma e baixa o estoque), estoque insuficiente, entrada inválida, headers/payload do `POST /orders` |
+| `e2e/api-contract.spec.ts` | contrato assumido por `src/api.ts`: `GET /products`, erros `{ errorCode, message, retryable }`, idempotência e `GET /orders/:id` |
+| `e2e/ui-states.spec.ts` | estados que o backend real não produz de forma determinística (rede interceptada): loading/anti-duplo clique, `202` + polling, `503` do ERP, backend fora do ar |
+
+### Duas particularidades deste backend
+
+1. **O simulador de ERP é aleatório** (65% sucesso rápido, 20% lento, 15% falha
+   transitória — ver `backend/src/erp/erp.service.ts`). Por isso o teste de
+   compra repete a operação até confirmar, em vez de assumir que o primeiro
+   clique dá certo.
+2. **O estoque é em memória e finito** (`cap-001` = 5, `cap-002` = 2,
+   `cap-003` = 0, `cap-004` = 1). Se você mantém a API aberta e roda a suíte
+   várias vezes, o estoque acaba e os cenários de compra passam a ser
+   **pulados** em vez de falharem. Para ter sempre estado limpo, pare a API
+   antes: o Playwright sobe uma instância nova a cada execução. Para apontar
+   para outra porta use `E2E_BACKEND_URL` (no PowerShell:
+   `$env:E2E_BACKEND_URL='http://localhost:3002'`).
+
+> **Achado durante a escrita dos testes:** o botão "Tentar novamente" após um
+> `ERP_UNAVAILABLE` reaproveita a mesma `Idempotency-Key`, e o backend responde
+> `503` para sempre para uma chave que já falhou — o botão vira um loop. O
+> comportamento esperado (nova tentativa com nova chave) está registrado em
+> `test.fixme` em `e2e/ui-states.spec.ts`; remova o `.fixme` quando corrigir.
 
 ## O que esperamos observar na entrega — Front-end
 
@@ -91,6 +139,8 @@ descontinuado pelo time do React.
 
 - Sem testes automatizados de componente (Testing Library) — estratégia
   descrita na Pergunta 5 de [`../docs/RESPOSTAS.md`](../docs/RESPOSTAS.md).
+  O que existe hoje são testes end-to-end em
+  [Testes end-to-end (Playwright)](#testes-end-to-end-playwright).
 - Sem gerenciamento de estado global (Redux/Zustand) — desnecessário para o
   escopo de uma tela só; `useState` local resolve.
 - Layout propositalmente simples (o desafio não pede design elaborado).

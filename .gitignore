@@ -5,3 +5,9 @@ build/
 .env.local
 *.log
 .DS_Store
+
+# Playwright (testes E2E)
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/

@@ -1,4 +1,4 @@
-import { Product } from '../stock/product.interface';
+import { Product } from '../module/stock/product.interface';
 
 // Fábrica de dados iniciais: cada chamada devolve um Map novo, para que
 // cada instância da aplicação (ou cada teste) comece com um estado limpo,

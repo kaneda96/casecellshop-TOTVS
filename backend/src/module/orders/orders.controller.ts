@@ -4,7 +4,7 @@ import { ApiBody, ApiHeader, ApiOperation, ApiParam, ApiResponse, ApiTags } from
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderResponseDto } from './dto/order-response.dto';
-import { ApiErrorResponseDto } from '../common/dto/api-error-response.dto';
+import { ApiErrorResponseDto } from '../../common/dto/api-error-response.dto';
 import { Order } from './interfaces/order.interface';
 
 @ApiTags('orders')

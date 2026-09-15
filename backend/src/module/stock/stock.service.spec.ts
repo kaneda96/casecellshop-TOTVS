@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { StockService } from './stock.service';
-import { InsufficientStockException, ProductNotFoundException } from '../common/exceptions/domain.exceptions';
+import { InsufficientStockException, ProductNotFoundException } from '../../common/exceptions/domain.exceptions';
 
 describe('StockService', () => {
   let service: StockService;

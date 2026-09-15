@@ -4,7 +4,7 @@ import { StockService } from '../stock/stock.service';
 import { ErpService } from '../erp/erp.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { CreateOrderResult, Order } from './interfaces/order.interface';
-import { ErpUnavailableException, OrderNotFoundException } from '../common/exceptions/domain.exceptions';
+import { OrderNotFoundException, UnavailableException } from '../../common/exceptions/domain.exceptions';
 
 const ERP_TIMEOUT_MS = 2000;
 
@@ -34,7 +34,7 @@ export class OrdersService {
           // Mantém o mesmo formato de erro que a primeira tentativa teria
           // recebido, para o cliente não precisar distinguir "erro original"
           // de "replay de um pedido que falhou".
-          throw new ErpUnavailableException(existing.id);
+          throw new UnavailableException(existing.id);
         }
         return { httpStatus: existing.status === 'PENDING' ? 202 : 201, order: existing };
       }
@@ -77,7 +77,7 @@ export class OrdersService {
       order.errorCode = 'ERP_UNAVAILABLE';
       order.errorMessage = 'Falha temporária ao confirmar o pedido no ERP.';
       this.touch(order);
-      throw new ErpUnavailableException(order.id);
+      throw new UnavailableException(order.id);
     }
 
     // TIMEOUT: mantém a reserva (não libera estoque), responde 202 e deixa

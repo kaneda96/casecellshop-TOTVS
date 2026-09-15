@@ -1,5 +1,4 @@
-# CaseCellShop — Mini Checkout (Desafio Técnico Pleno)
-
+# CaseCellShop
 Implementação de um fluxo fullstack de checkout de capinhas de celular, feito para o
 desafio técnico da CaseCellShop. Foco em consistência de estoque, idempotência e
 resiliência a falhas do ERP — os 3 problemas descritos no case.
@@ -127,7 +126,7 @@ utilitárias direto no JSX — `card`, `btn`, `badge`, `alert`, `spinner-border`
 para aprender). O resultado é um front-end onde qualquer pessoa que já
 conhece Bootstrap reconhece o CSS imediatamente.
 
-### Por que Vite (mesmo sem eu conhecer)
+### Por que Vite
 
 Cogitei recomendar trocar para Create React App (CRA), que é mais conhecido,
 mas decidi manter o Vite por dois motivos:
