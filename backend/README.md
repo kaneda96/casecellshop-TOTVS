@@ -63,6 +63,101 @@ test/
 └── app.e2e-spec.ts             testes end-to-end (12 cenários)
 ```
 
+## Fluxo de cada endpoint (diagramas)
+
+Rotas expostas pela API:
+
+| Método | Rota | Controller | O que faz |
+| --- | --- | --- | --- |
+| GET | `/health` | `health.controller.ts` | Healthcheck simples |
+| GET | `/products` | `products/products.controller.ts` | Lista o catálogo com estoque disponível |
+| GET | `/products/:id` | `products/products.controller.ts` | Consulta um produto específico |
+| POST | `/orders` | `orders/orders.controller.ts` | Checkout: reserva estoque e fatura no ERP |
+| GET | `/orders/:id` | `orders/orders.controller.ts` | Status do pedido (polling após um `202`) |
+
+### `GET /health`
+
+```mermaid
+flowchart LR
+    A["GET /health"] --> B["HealthController.check()"]
+    B --> C["200 { status: 'ok' }"]
+```
+
+### `GET /products`
+
+```mermaid
+flowchart TD
+    A["GET /products"] --> B["ProductsController.list()"]
+    B --> C["StockService.listProducts()"]
+    C --> D["para cada produto:\navailable = stock - reserved\n(nunca negativo)"]
+    D --> E["200 { products: [...] }"]
+```
+
+### `GET /products/:id`
+
+```mermaid
+flowchart TD
+    A["GET /products/:id"] --> B["ProductsController.getOne(id)"]
+    B --> C{"StockService.getProduct(id)"}
+    C -- "não existe" --> D["404 PRODUCT_NOT_FOUND"]
+    C -- "existe" --> E["available = stock - reserved\n(nunca negativo)"]
+    E --> F["200 { id, name, price, available }"]
+```
+
+### `POST /orders`
+
+```mermaid
+flowchart TD
+    A["POST /orders\nbody: productId, quantity\nheader Idempotency-Key (opcional)"] --> B["ValidationPipe\n(payload inválido)"]
+    B -- "inválido" --> B1["400 VALIDATION_ERROR"]
+    B -- "válido" --> C{"Idempotency-Key\njá registrada?"}
+
+    C -- "não" --> H["StockService.reserveStock()\nsíncrono e atômico"]
+    H -- "produto não existe" --> H1["404 PRODUCT_NOT_FOUND"]
+    H -- "estoque insuficiente" --> H2["409 INSUFFICIENT_STOCK"]
+    H -- "estoque reservado" --> K["cria pedido PROCESSING\ne registra a Idempotency-Key"]
+
+    C -- "sim" --> D{"status do pedido\nexistente"}
+    D -- "FAILED_TEMPORARY" --> D1["503 ERP_UNAVAILABLE\n(retryable)"]
+    D -- "PENDING" --> D2["202 (mesmo pedido)"]
+    D -- "CONFIRMED" --> D3["201 (mesmo pedido)"]
+
+    K --> L{"ERP responde\nem até 2s?"}
+    L -- "sucesso" --> M["confirmReservation()\n201 CONFIRMED"]
+    L -- "falha" --> N["releaseReservation()\n503 ERP_UNAVAILABLE (retryable)"]
+    L -- "timeout" --> O["202 PENDING\nreserva mantida"]
+    O --> P["watchInBackground()\nresolve o pedido depois"]
+```
+
+Estados possíveis do pedido (campo `status`), começando em `PROCESSING`:
+
+```mermaid
+stateDiagram-v2
+    [*] --> PROCESSING
+    PROCESSING --> CONFIRMED: ERP responde rápido
+    PROCESSING --> FAILED_TEMPORARY: ERP falha
+    PROCESSING --> PENDING: timeout de 2s
+    PENDING --> CONFIRMED: ERP confirma em background
+    PENDING --> FAILED_TEMPORARY: ERP falha em background
+```
+
+### `GET /orders/:id`
+
+```mermaid
+flowchart TD
+    A["GET /orders/:id"] --> B["OrdersController.getOne(id)"]
+    B --> C{"OrdersService.getOrder(id)"}
+    C -- "não existe" --> D["404 ORDER_NOT_FOUND"]
+    C -- "existe" --> E["200 { orderId, status, productId, quantity, createdAt, updatedAt }"]
+    E --> F{"status"}
+    F -- "PROCESSING / PENDING" --> G["front-end continua o polling"]
+    F -- "CONFIRMED / FAILED_TEMPORARY" --> H["estado final: polling para"]
+```
+
+Todos os erros dos diagramas saem no mesmo formato
+`{ errorCode, message, retryable }`, garantido pelo filtro global em
+`common/filters/http-exception.filter.ts`.
+
 ## O que esperamos observar na entrega — Backend
 
 Checklist do desafio, com um detalhamento de **onde e como** cada item foi
@@ -113,7 +208,6 @@ resolvido (para você, no futuro, lembrar rápido o que foi feito e por quê).
   checkout (2s) está em `orders/orders.service.ts` (`raceErp`).
 
 **Bônus implementados:**
-- Diagrama de arquitetura: [`../docs/DIAGRAMA.md`](../docs/DIAGRAMA.md).
 - Logs estruturados: `common/service/custom-logger/` (console + `logs/app.log`)
   e `common/interceptors/` (log das rotas) — ver seção acima.
 - Endpoint de status do pedido: `GET /orders/:id` (para polling após um `202`).
@@ -127,7 +221,7 @@ resolvido (para você, no futuro, lembrar rápido o que foi feito e por quê).
   (`watchInBackground` em `orders.service.ts`) dispara uma **nova** chamada
   ao simulador de ERP, em vez de reaproveitar o resultado da chamada
   original — simplificação assumida conscientemente para manter o escopo
-  pequeno (ver `docs/RESPOSTAS.md`, Pergunta 2, para como isso seria feito
-  com uma fila/webhook de verdade).
-- Sem testes de contrato formalizados entre front e back (descrito como
-  próximo passo na Pergunta 5 de `docs/RESPOSTAS.md`).
+  pequeno. Com uma fila/webhook de verdade, daria para "escutar" o
+  resultado real da chamada original em vez de reprocessar o pedido.
+- Sem testes de contrato formalizados entre front e back (o próximo passo
+  seria gerar os tipos do front a partir do OpenAPI exposto em `/docs`).

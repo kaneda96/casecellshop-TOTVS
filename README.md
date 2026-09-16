@@ -133,26 +133,6 @@ utilitárias direto no JSX — `card`, `btn`, `badge`, `alert`, `spinner-border`
 para aprender). O resultado é um front-end onde qualquer pessoa que já
 conhece Bootstrap reconhece o CSS imediatamente.
 
-### Por que Vite
-
-Cogitei recomendar trocar para Create React App (CRA), que é mais conhecido,
-mas decidi manter o Vite por dois motivos:
-
-1. **O time do React descontinuou oficialmente o CRA** — não recebe mais
-   atualizações e o próprio time recomenda não usá-lo para projetos novos.
-   Migrar para uma ferramenta descontinuada seria trocar algo que funciona
-   bem por algo em fim de vida.
-2. **Manter o Vite não exige "conhecer" o Vite.** No dia a dia, a única
-   interação com o empacotador é rodar dois comandos —
-   `npm run dev` (desenvolvimento) e `npm run build` (gerar os arquivos
-   finais) — exatamente os mesmos dois comandos que o CRA usaria. Não há
-   configuração para mexer nem conceito novo para aprender só para manter o
-   projeto.
-
-Ou seja: o Bootstrap resolve a familiaridade que você pediu (CSS que você já
-lê e escreve), e o Vite continua nos bastidores sem exigir nada de você além
-dos dois comandos de sempre.
-
 ## Limitações conhecidas / o que não foi feito
 
 - **Persistência**: tudo é em memória; reiniciar o servidor zera estoque e

@@ -8,8 +8,7 @@
 SPA em **React + TypeScript**, com **Bootstrap** para estilo (sem
 `react-bootstrap`; só classes CSS utilitárias do Bootstrap direto no JSX,
 que é a forma mais simples de usar e de dar manutenção sem aprender uma API
-nova). Empacotado com **Vite** — ver o porquê em
-[`../README.md`](../README.md#por-que-vite-mesmo-sem-eu-conhecer).
+nova). Empacotado com **Vite**.
 
 ## Como rodar
 
@@ -71,7 +70,7 @@ Na primeira vez é preciso baixar o navegador: `npx playwright install chromium`
 ### Duas particularidades deste backend
 
 1. **O simulador de ERP é aleatório** (65% sucesso rápido, 20% lento, 15% falha
-   transitória — ver `backend/src/erp/erp.service.ts`). Por isso o teste de
+   transitória — ver `backend/src/module/erp/erp.service.ts`). Por isso o teste de
    compra repete a operação até confirmar, em vez de assumir que o primeiro
    clique dá certo.
 2. **O estoque é em memória e finito** (`cap-001` = 5, `cap-002` = 2,
@@ -87,6 +86,79 @@ Na primeira vez é preciso baixar o navegador: `npx playwright install chromium`
 > `503` para sempre para uma chave que já falhou — o botão vira um loop. O
 > comportamento esperado (nova tentativa com nova chave) está registrado em
 > `test.fixme` em `e2e/ui-states.spec.ts`; remova o `.fixme` quando corrigir.
+
+## Fluxo de idempotência no front-end (diagramas)
+
+A chave nasce em `ProductCard.generateIdempotencyKey()` (`crypto.randomUUID()`,
+com fallback `idem-<timestamp>-<random>`), é guardada em `idempotencyKeyRef`
+(`useRef`, sem re-render) e vai em **toda** chamada de `createOrder` no header
+`Idempotency-Key` (`src/api.ts`). O componente nunca envia duas requisições de
+compra sem chave.
+
+### 1. Quando a chave é criada ou reaproveitada
+
+```mermaid
+flowchart TD
+    A["handleBuy(reuseKey)"] --> B{"isBusy?"}
+    B -- "sim" --> B1["return\n(o clique é ignorado)"]
+    B -- "não" --> C{"reuseKey === false\nou ref vazio?"}
+    C -- "sim" --> C1["gera chave nova\n- Comprar: reuseKey = false\n- Tentar novamente após remontar"]
+    C -- "não" --> C2["reutiliza a chave do ref\n- Tentar novamente: replay da mesma tentativa"]
+    C1 --> D["POST /orders\nheader Idempotency-Key"]
+    C2 --> D
+```
+
+Traduzindo em regras:
+
+| Ação | `reuseKey` | Chave enviada |
+| --- | --- | --- |
+| Clique em **Comprar** | `false` | Sempre **nova** (`crypto.randomUUID()`) |
+| Clique em **Tentar novamente** | `true` | **A mesma** do `idempotencyKeyRef` |
+| Segundo clique durante o processamento | — | Nada é enviado (`isBusy` + botão `disabled`) |
+
+### 2. O que acontece com a chave em cada desfecho
+
+```mermaid
+flowchart TD
+    D["POST /orders\nheader Idempotency-Key"] --> E{"resposta"}
+    E -- "201 CONFIRMED" --> F["sucesso\nrecarrega o estoque"]
+    E -- "202 PENDING" --> G["polling GET /orders/:id\n(enquanto PROCESSING / PENDING)"]
+    G -- "CONFIRMED" --> F
+    G -- "FAILED_TEMPORARY" --> H["erro retryable\n('Tentar novamente')"]
+    G -- "15s sem desfecho" --> H
+    E -- "400 VALIDATION_ERROR\n409 INSUFFICIENT_STOCK" --> I["erro final\n(sem 'Tentar novamente')"]
+    E -- "503 ERP_UNAVAILABLE\nou falha de rede" --> H
+    H --> J["'Tentar novamente'\nhandleBuy(true)"]
+    J -- "reusa a MESMA chave" --> D
+```
+
+### Por que o replay é a chave (e não um `useState`)
+
+- **Comprar = tentativa nova**: `reuseKey = false` força uma chave nova, então
+  uma segunda compra do mesmo produto nunca é confundida com a anterior.
+- **Tentar novamente = replay**: reenviar a **mesma** chave é o que torna o
+  retry seguro quando a falha foi de rede — se a primeira requisição chegou ao
+  servidor, o backend devolve o pedido já criado (201/202/503) em vez de
+  reservar estoque de novo.
+- **`useRef` em vez de `useState`**: a chave é um detalhe de controle, não algo
+  que deva aparecer na tela; guardar em estado causaria re-render a cada
+  tentativa. O ref também sobrevive a re-renders (ex: `onStockChange`
+  recarregando a lista) e é descartado quando o componente é desmontado.
+
+### Comportamento atual vs. ideal no retry
+
+O código de hoje reusa a mesma chave em **todos** os casos retryable, inclusive
+`ERP_UNAVAILABLE`. Nesse caso o backend marca a chave como `FAILED_TEMPORARY`
+permanentemente (o `Map` não tem TTL), então cada nova tentativa devolve `503`
+de novo — o botão vira um loop. O esperado seria:
+
+- **Falha de rede / timeout do cliente** → reusar a chave (pode ter chegado).
+- **`ERP_UNAVAILABLE`** → gerar chave nova, porque o backend já liberou a
+  reserva de estoque (`releaseReservation`) e o pedido é, de fato, uma nova
+  tentativa.
+
+Esse desvio está marcado com `test.fixme` em `e2e/ui-states.spec.ts`
+("tentar novamente após ERP_UNAVAILABLE deve enviar uma NOVA Idempotency-Key").
 
 ## O que esperamos observar na entrega — Front-end
 
@@ -137,9 +209,8 @@ descontinuado pelo time do React.
 
 ## Limitações conhecidas
 
-- Sem testes automatizados de componente (Testing Library) — estratégia
-  descrita na Pergunta 5 de [`../docs/RESPOSTAS.md`](../docs/RESPOSTAS.md).
-  O que existe hoje são testes end-to-end em
+- Sem testes automatizados de componente (Testing Library). O que existe
+  hoje são testes end-to-end em
   [Testes end-to-end (Playwright)](#testes-end-to-end-playwright).
 - Sem gerenciamento de estado global (Redux/Zustand) — desnecessário para o
   escopo de uma tela só; `useState` local resolve.
